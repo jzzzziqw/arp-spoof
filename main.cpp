@@ -176,7 +176,7 @@ int main(int argc, char* argv[]) {
             EthArpPacket* recv_etharp = (EthArpPacket*)recv_packet;
             if (recv_etharp->eth_.type_ == htons(EthHdr::Arp) && recv_etharp->arp_.op_ == htons(ArpHdr::Reply)) {
                 if (recv_etharp->arp_.sip() == sender_ips[i]) {
-                    printf("Received ARP reply from sender. Sender's MAC: %s\n", std::string(recv_etharp->eth_.smac()).c_str());
+                    printf("Sender's MAC: %s\n", std::string(recv_etharp->eth_.smac()).c_str());
                     packet.eth_.dmac_ = recv_etharp->eth_.smac_;
                     packet.arp_.tmac_ = recv_etharp->eth_.smac_;
                     break;

